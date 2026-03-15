@@ -4,66 +4,118 @@
     <meta charset="UTF-8">
     <title>주완님의 마켓 전략 리포트 - {{ data.date }}</title>
     <style>
-        body { font-family: 'Apple SD Gothic Neo', sans-serif; background: #f4f7f6; color: #333; line-height: 1.6; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
-        .section { background: #fff; padding: 25px; margin-bottom: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        h1 { color: #2c3e50; text-align: center; margin-bottom: 30px; }
-        h2 { border-left: 6px solid #3498db; padding-left: 15px; color: #2c3e50; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .card { border: 1px solid #eee; padding: 15px; border-radius: 8px; }
-        .news-item { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; }
-        .news-item a { color: #3498db; text-decoration: none; font-weight: bold; }
-        .reddit-item { background: #fff5f5; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
-        .tag { display: inline-block; background: #3498db; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 5px; }
-        img { width: 100%; height: auto; border-radius: 5px; }
+        body { font-family: 'Apple SD Gothic Neo', sans-serif; background: #f8f9fa; color: #333; line-height: 1.6; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { text-align: center; margin-bottom: 40px; }
+        h1 { color: #2c3e50; font-size: 2.5em; margin-bottom: 5px; }
+        .section { background: #fff; padding: 25px; margin-bottom: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { border-left: 5px solid #3498db; padding-left: 15px; color: #2c3e50; margin-top: 0; }
+        .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { border: 1px solid #eee; padding: 15px; border-radius: 8px; background: #fafafa; }
+        img { width: 100%; height: auto; border-radius: 5px; margin-top: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+        th { background: #f1f1f1; }
+        .positive { color: #e74c3c; font-weight: bold; }
+        .negative { color: #2980b9; font-weight: bold; }
+        .news-item { margin-bottom: 15px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
+        .news-item a { color: #3498db; text-decoration: none; font-weight: bold; font-size: 1.1em; }
+        .reddit-tag { display: inline-block; background: #ff4500; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 0.8em; margin-bottom: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>주완님의 통합 인사이트 리포트</h1>
-        
+        <header>
+            <h1>마켓 펄스 & 퀀트 인사이트</h1>
+            <p>발행 일시: {{ data.date }} | <strong>Market Sentiment (VIX):</strong> {{ data.market_sentiment.VIX|round(2) }} ({{ data.market_sentiment.Label }})</p>
+        </header>
+
         <div class="section">
-            <h2>1. 지수 파동 분석</h2>
-            <div class="grid">
+            <h2>1. 주요 지수 및 엘리어트 파동 관점</h2>
+            <div class="grid-2">
                 {% for item in data.index_analysis %}
                 <div class="card">
-                    <h3>{{ item.name }} ({{ item.current_price|round(0)|int }})</h3>
-                    <p><strong>위치:</strong> {{ item.position }}</p>
-                    <p><strong>변동:</strong> {{ item.change|round(2) }}%</p>
-                    <img src="data:image/png;base64,{{ data.plots['chart_'+item.name] }}">
+                    <h3>{{ item.name }} ({{ item.current_price|round(0)|int|string }}) 
+                        <span class="{% if item.change > 0 %}positive{% else %}negative{% endif %}">
+                            {{ '▲' if item.change > 0 else '▼' }} {{ item.change|round(2) }}%
+                        </span>
+                    </h3>
+                    <p><strong>현재 파동 위치:</strong> {{ item.position }}</p>
+                    <p><strong>메인 시나리오:</strong> {{ item.main_scenario }}</p>
+                    <img src="data:image/png;base64,{{ data.plots['index_elliott_' + item.name] }}" alt="Chart">
                 </div>
                 {% endfor %}
             </div>
         </div>
 
+        <div class="grid-2">
+            <div class="section">
+                <h2>2. 주도 섹터 로테이션 (1개월)</h2>
+                {% if 'sector_map' in data.plots %}
+                <img src="data:image/png;base64,{{ data.plots.sector_map }}" alt="Sector Map">
+                {% else %}
+                <p>데이터 부족으로 섹터 맵을 생성하지 못했습니다.</p>
+                {% endif %}
+            </div>
+
+            <div class="section">
+                <h2>3. 매크로 지표 상관관계 분석</h2>
+                <ul style="margin-bottom: 15px;">
+                    {% for insight in data.macro_insights %}
+                    <li>{{ insight }}</li>
+                    {% endfor %}
+                </ul>
+                {% if 'macro_heatmap' in data.plots %}
+                <img src="data:image/png;base64,{{ data.plots.macro_heatmap }}" alt="Macro Heatmap" style="max-width: 80%; margin: 0 auto; display: block;">
+                {% endif %}
+            </div>
+        </div>
+
         <div class="section">
-            <h2>2. 네이버 뉴스 & 블로그 트렌드</h2>
-            <div class="grid">
-                <div>
-                    <h3>최신 뉴스</h3>
+            <h2>4. VCP 돌파 후보 스크리닝 (Kullamägi Setup 후보군)</h2>
+            {% if data.vcp_candidates %}
+            <table>
+                <tr><th>종목명(ETF)</th><th>RS 점수</th><th>최근 변동폭</th><th>돌파 잠재력</th></tr>
+                {% for cand in data.vcp_candidates %}
+                <tr>
+                    <td>{{ cand.name }}</td>
+                    <td>{{ cand.rs_score|round(1) }}</td>
+                    <td>{{ cand.recent_range_pct|round(1) }}%</td>
+                    <td><strong>{{ cand.breakout_potential }}</strong></td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <p>현재 기술적 셋업(VCP) 기준을 충족하는 종목이 없습니다.</p>
+            {% endif %}
+        </div>
+
+        <div class="section">
+            <h2>5. 트렌드 & 대중 심리 (Naver & Reddit)</h2>
+            <div class="grid-3">
+                <div class="card">
+                    <h3>📰 네이버 뉴스 헤드라인</h3>
                     {% for n in data.naver_news %}
-                    <div class="news-item"><a href="{{ n.link }}" target="_blank">{{ n.title }}</a></div>
+                    <div class="news-item"><a href="{{ n.link }}">{{ n.title }}</a></div>
                     {% endfor %}
                 </div>
-                <div>
-                    <h3>파워 블로그 분석</h3>
+                <div class="card">
+                    <h3>📝 네이버 파워 블로그 분석</h3>
                     {% for b in data.naver_blogs %}
-                    <div class="news-item"><a href="{{ b.link }}" target="_blank">{{ b.title }}</a><br><small>{{ b.description }}</small></div>
+                    <div class="news-item"><a href="{{ b.link }}">{{ b.title }}</a><br><small style="color:#666;">{{ b.description }}</small></div>
                     {% endfor %}
                 </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>3. 레딧(Reddit) 글로벌 커뮤니티 심리</h2>
-            <div class="grid">
-                {% for r in data.reddit_threads %}
-                <div class="reddit-item">
-                    <span class="tag">r/{{ r.sub }}</span><br>
-                    <a href="{{ r.url }}" target="_blank" style="text-decoration:none; color:#222;">{{ r.title }}</a>
-                    <div style="font-size:12px; color:#e74c3c;">Upvotes: {{ r.ups }}</div>
+                <div class="card">
+                    <h3>🔥 레딧(Reddit) 글로벌 핫 쓰레드</h3>
+                    {% for r in data.reddit_threads %}
+                    <div class="news-item">
+                        <span class="reddit-tag">r/{{ r.sub }}</span><br>
+                        <a href="{{ r.url }}">{{ r.title }}</a>
+                        <div style="font-size:0.8em; color:#e74c3c; margin-top:3px;">Upvotes: {{ r.ups }}</div>
+                    </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
         </div>
     </div>
