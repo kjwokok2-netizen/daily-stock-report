@@ -6,4 +6,4 @@ beautifulsoup4
 matplotlib
 seaborn
 jinja2
-praw
+google-generativeai
