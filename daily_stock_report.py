@@ -1,47 +1,41 @@
+import os
+import requests
 import pandas as pd
 import numpy as np
 import FinanceDataReader as fdr
-import requests
-from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime, timedelta
-import os
+from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 import base64
 from io import BytesIO
 import time
+import praw
 
 # ==========================================
-# 1. Configuration & Setup
+# 1. Configuration & API Setup
 # ==========================================
+NAVER_CLIENT_ID = os.environ.get('NAVER_CLIENT_ID', '')
+NAVER_CLIENT_SECRET = os.environ.get('NAVER_CLIENT_SECRET', '')
+REDDIT_CLIENT_ID = os.environ.get('REDDIT_CLIENT_ID', '')
+REDDIT_CLIENT_SECRET = os.environ.get('REDDIT_CLIENT_SECRET', '')
+REDDIT_USER_AGENT = "StockReportBot/1.0"
+
 OUTPUT_DIR = "docs"
 IMAGE_DIR = os.path.join(OUTPUT_DIR, "images")
 TEMPLATE_DIR = "templates"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 
-# 지수 티커 (안정적인 티커 위주)
-INDICES = {
-    'KOSPI': 'KS11',
-    'KOSDAQ': 'KQ11',
-    'NASDAQ': 'IXIC',
-    'PHLX Semico': 'SOX'
-}
-
-# 거시 지표 티커 (FRED 소스로 변경하여 안정성 확보)
-MACRO_TICKERS = {
-    'US10Y': 'DGS10', # US 10-year Treasury Yield (FRED)
-    'US02Y': 'DGS2',  # US 2-year Treasury Yield (FRED)
-    'USD/KRW': 'USD/KRW',
-    'WTI': 'CL=F'     # Crude Oil (Yahoo)
-}
-
+INDICES = {'KOSPI': 'KS11', 'KOSDAQ': 'KQ11', 'NASDAQ': 'IXIC', 'PHLX Semico': 'SOX'}
+MACRO_TICKERS = {'US10Y': 'DGS10', 'US02Y': 'DGS2', 'USD/KRW': 'USD/KRW', 'WTI': 'CL=F'}
 SECTOR_ETFs = {
     'Semi-conductor': '091160', 'Secondary Batt': '305700', 'Energy': '117700',
-    'Materials': '117460', 'Industrials': '117600', 'HealthCare': '117600'
+    'Materials': '117460', 'Industrials': '117600', 'HealthCare': '117600',
+    'Financials': '117460', 'Info Tech': '117690'
 }
 
-plt.style.use('ggplot') # 기본 스타일 사용
+plt.style.use('ggplot')
 
 def fig_to_base64(fig):
     img = BytesIO()
@@ -55,17 +49,14 @@ def fig_to_base64(fig):
 def get_stock_data(ticker, days=252):
     end = datetime.now()
     start = end - timedelta(days=days)
-    # API 요청 실패 대비 재시도 로직
     for i in range(3):
         try:
-            # 금리 데이터의 경우 FRED에서 가져오도록 강제
             if ticker in ['DGS10', 'DGS2']:
                 df = fdr.DataReader(ticker, start, end, data_source='fred')
             else:
                 df = fdr.DataReader(ticker, start, end)
             if not df.empty: return df
-        except:
-            time.sleep(1)
+        except: time.sleep(1)
     return pd.DataFrame()
 
 def get_market_sentiment():
@@ -73,112 +64,151 @@ def get_market_sentiment():
         us10y = get_stock_data('DGS10')
         us02y = get_stock_data('DGS2')
         spread_val = us10y.iloc[-1, 0] - us02y.iloc[-1, 0]
-    except:
-        spread_val = 0
-    
+    except: spread_val = 0
     try:
-        vix = fdr.DataReader('^VIX') # VIX는 앞에 ^를 붙이는 것이 더 안정적임
-        vix_val = vix.iloc[-1, 0]
-    except:
-        vix_val = 20 # 데이터 부재 시 중립값
-        
-    sentiment = {'VIX': vix_val, 'Spread': spread_val, 'Label': 'Neutral'}
-    if sentiment['VIX'] > 25: sentiment['Label'] = 'Fear'
-    elif sentiment['VIX'] < 15: sentiment['Label'] = 'Greed'
+        vix = fdr.DataReader('^VIX').iloc[-1, 0]
+    except: vix = 20
+    sentiment = {'VIX': vix, 'Spread': spread_val, 'Label': 'Neutral'}
+    if vix > 25: sentiment['Label'] = 'Fear'
+    elif vix < 15: sentiment['Label'] = 'Greed'
     return sentiment
 
-def get_summarized_news():
-    news = []
+def get_naver_search(query, category='news', display=5):
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET: return []
+    url = f"https://openapi.naver.com/v1/search/{category}.json"
+    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
+    params = {"query": query, "display": display, "sort": "sim"}
     try:
-        url = 'https://news.google.com/rss/search?q=주식시장+경제+트렌드&hl=ko&gl=KR&ceid=KR:ko'
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.content, features='xml')
-        items = soup.find_all('item', limit=5)
-        for item in items:
-            news.append({'title': item.title.text, 'link': item.link.text, 'summary': '주요 뉴스 헤드라인입니다.'})
-    except:
-        news.append({'title': '뉴스를 불러오지 못했습니다.', 'link': '#', 'summary': ''})
-    return news
+        res = requests.get(url, headers=headers, params=params, timeout=10)
+        items = res.json().get('items', [])
+        return [{'title': i['title'].replace('<b>','').replace('</b>',''), 'link': i['link'], 'description': i.get('description', '').replace('<b>','').replace('</b>','')[:80]+'...'} for i in items]
+    except: return []
+
+def get_reddit_threads(subreddits=['stocks', 'wallstreetbets'], limit=5):
+    if not REDDIT_CLIENT_ID or not REDDIT_CLIENT_SECRET: return []
+    try:
+        reddit = praw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_CLIENT_SECRET, user_agent=REDDIT_USER_AGENT)
+        results = []
+        for sub in subreddits:
+            for post in reddit.subreddit(sub).hot(limit=limit):
+                if not post.stickied:
+                    results.append({'sub': sub, 'title': post.title, 'url': post.url, 'ups': post.ups})
+        return results
+    except: return []
 
 # ==========================================
-# 3. Analysis Functions (핵심 로직 유지)
+# 3. Quantitative Analysis Functions
 # ==========================================
-def analyze_index_elliott(ticker_df, name):
-    if ticker_df.empty: return {'name': name, 'current_price': 0, 'change': 0, 'position': 'Data Missing', 'main_scenario': '-', 'alt_scenario': '-', 'support': 0, 'resistance': 0}
+def analyze_index_elliott(df, name):
+    if df.empty: return {'name': name, 'current_price': 0, 'change': 0, 'position': 'Data Missing', 'main_scenario': '-', 'alt_scenario': '-', 'support': 0, 'resistance': 0}
+    curr = df['Close'].iloc[-1]
+    prev = df['Close'].iloc[-2]
+    high_60 = df['High'].rolling(window=60).max().iloc[-1]
+    low_60 = df['Low'].rolling(window=60).min().iloc[-1]
     
-    window = 20
-    ticker_df['Local_High'] = ticker_df['High'].rolling(window=window).max()
-    ticker_df['Local_Low'] = ticker_df['Low'].rolling(window=window).min()
+    change = (curr / prev - 1) * 100
+    ratio = (curr - low_60) / (high_60 - low_60 + 1e-6)
     
-    current_price = ticker_df['Close'].iloc[-1]
-    prev_close = ticker_df['Close'].iloc[-2]
-    last_peak = ticker_df['High'].rolling(window=60).max().iloc[-1]
-    last_trough = ticker_df['Low'].rolling(window=60).min().iloc[-1]
-    
-    change = (current_price / prev_close - 1) * 100
-    retracement = (current_price - last_trough) / (last_peak - last_trough + 1e-6)
-    
-    analysis = {
-        'name': name, 'current_price': current_price, 'change': change,
-        'support': last_trough, 'resistance': last_peak,
-        'main_scenario': "상승 추세 유지 시도 중", 'alt_scenario': "주요 지지선 이탈 시 조정 확대"
-    }
-    
-    if retracement < 0.382:
+    analysis = {'name': name, 'current_price': curr, 'change': change, 'support': low_60, 'resistance': high_60, 'main_scenario': "상승 추세 유지 시도 중", 'alt_scenario': "주요 지지선 이탈 시 조정 확대"}
+    if ratio < 0.382:
         analysis['position'] = "과매도 또는 하락 파동 진행"
         analysis['main_scenario'] = "하락 A파 완료 후 반등 시도 구간"
-    elif retracement > 0.786:
+    elif ratio > 0.786:
         analysis['position'] = "상승 파동(3파 또는 5파) 진행 중"
         analysis['main_scenario'] = "강력한 상승 추세 형성"
     else:
         analysis['position'] = "박스권 조정 및 에너지 응축"
-        
     return analysis
 
-def analyze_sector_rotation():
+def analyze_sector_rotation(sector_dfs):
     sector_perf = []
-    for name, ticker in SECTOR_ETFs.items():
-        df = get_stock_data(ticker, days=40)
-        if not df.empty:
+    for name, df in sector_dfs.items():
+        if not df.empty and len(df) > 22:
             curr = df['Close'].iloc[-1]
-            prev = df['Close'].iloc[-22] if len(df) > 22 else df['Close'].iloc[0]
+            prev = df['Close'].iloc[-22]
             sector_perf.append({'Sector': name, 'Perf_1mo': (curr/prev - 1)*100})
     return pd.DataFrame(sector_perf)
 
+def screen_vcp_candidates(data_dict):
+    candidates = []
+    for ticker, df in data_dict.items():
+        if df.empty or len(df) < 200: continue
+        df['MA50'] = df['Close'].rolling(window=50).mean()
+        df['MA200'] = df['Close'].rolling(window=200).mean()
+        current_close = df['Close'].iloc[-1]
+        if current_close > df['MA200'].iloc[-1] and df['MA50'].iloc[-1] > df['MA200'].iloc[-1]:
+            recent_range = (df['High'].iloc[-10:].max() / df['Low'].iloc[-10:].min() - 1) * 100
+            rs_score = (df['Close'].iloc[-1] / df['Close'].iloc[-200]) * 100
+            if recent_range < 7 and rs_score > 100:
+                candidates.append({'ticker': ticker, 'name': f'ETF {ticker}', 'rs_score': rs_score, 'recent_range_pct': recent_range, 'breakout_potential': 'High' if df['Volume'].iloc[-1] > df['Volume'].rolling(window=20).mean().iloc[-1] * 1.5 else 'Medium'})
+    return candidates
+
+def analyze_macro_correlations():
+    kospi_df = get_stock_data(INDICES['KOSPI'])
+    corr_data = pd.DataFrame({'KOSPI': kospi_df['Close']})
+    for name, ticker in MACRO_TICKERS.items():
+        m_df = get_stock_data(ticker)
+        if not m_df.empty: corr_data[name] = m_df['Close']
+    corr_matrix = corr_data.dropna().corr()
+    
+    insights = []
+    if not corr_matrix.empty and 'KOSPI' in corr_matrix:
+        kospi_corrs = corr_matrix['KOSPI'].drop('KOSPI')
+        for name, corr in kospi_corrs.items():
+            if abs(corr) > 0.6:
+                insights.append(f"{name}와(과) 강한 {'양' if corr > 0 else '음'}의 상관관계 ({corr:.2f})")
+    if not insights: insights.append("최근 KOSPI와 주요 매크로 지표 간 강한 상관관계가 관찰되지 않음.")
+    return corr_matrix, insights
+
 # ==========================================
-# 4. Main Process
+# 4. Main Execution
 # ==========================================
 def main():
     report_data = {'date': datetime.now().strftime('%Y-%m-%d %H:%M'), 'plots': {}, 'index_analysis': []}
     
+    # 마켓 센티먼트
     report_data['market_sentiment'] = get_market_sentiment()
-    report_data['news'] = get_summarized_news()
-    report_data['smart_money'] = {'foreign': {'top_buy': ['삼성전자', 'SK하이닉스']}, 'institutional': {'top_buy': ['현대차', '기아']}, 'consensus_buy': ['현대차']}
-
+    
+    # 지수 및 파동 분석
     for name, ticker in INDICES.items():
         df = get_stock_data(ticker)
         analysis = analyze_index_elliott(df, name)
         report_data['index_analysis'].append(analysis)
-        
-        # 차트 생성
         if not df.empty:
             fig, ax = plt.subplots(figsize=(10, 4))
-            df['Close'].iloc[-100:].plot(ax=ax, color='black', title=f"{name} Trend")
+            df['Close'].iloc[-100:].plot(ax=ax, color='black')
+            ax.set_title(f"{name} Trend")
             ax.axhline(analysis['support'], color='red', linestyle='--')
             ax.axhline(analysis['resistance'], color='green', linestyle='--')
             report_data['plots'][f'index_elliott_{name}'] = fig_to_base64(fig)
             plt.close(fig)
 
-    sector_df = analyze_sector_rotation()
+    # 섹터 로테이션 & VCP 스크리닝
+    sector_dfs = {name: get_stock_data(ticker, 252) for name, ticker in SECTOR_ETFs.items()}
+    sector_df = analyze_sector_rotation(sector_dfs)
     if not sector_df.empty:
         fig, ax = plt.subplots(figsize=(10, 5))
-        sns.barplot(data=sector_df.sort_values('Perf_1mo'), x='Perf_1mo', y='Sector', ax=ax)
+        sns.barplot(data=sector_df.sort_values('Perf_1mo', ascending=False), x='Perf_1mo', y='Sector', ax=ax, palette='viridis')
+        ax.set_title("1-Month Sector Rotation")
         report_data['plots']['sector_map'] = fig_to_base64(fig)
         plt.close(fig)
         report_data['sector_performance'] = sector_df.to_dict('records')
     
-    report_data['vcp_candidates'] = [{'ticker': '005930', 'name': '삼성전자', 'rs_score': 85, 'recent_range_pct': 2.1, 'breakout_potential': 'High'}]
-    report_data['macro_insights'] = ["미국 10년물 금리 변동성 주시", "환율 안정화 여부가 외인 수급의 핵심"]
+    report_data['vcp_candidates'] = screen_vcp_candidates(sector_dfs)
+    
+    # 매크로 상관관계
+    corr_matrix, report_data['macro_insights'] = analyze_macro_correlations()
+    if not corr_matrix.empty:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
+        report_data['plots']['macro_heatmap'] = fig_to_base64(fig)
+        plt.close(fig)
+
+    # API 트렌드 크롤링 (네이버, 레딧)
+    keyword = "주식 시장 전망 OR 반도체"
+    report_data['naver_news'] = get_naver_search(keyword, 'news', 5)
+    report_data['naver_blogs'] = get_naver_search(keyword, 'blog', 5)
+    report_data['reddit_threads'] = get_reddit_threads()
 
     # HTML 렌더링
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
