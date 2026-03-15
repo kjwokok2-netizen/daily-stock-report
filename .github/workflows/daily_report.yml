@@ -6,12 +6,32 @@ on:
   schedule:
     - cron: '0 23 * * *'
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Create necessary directories
+        run: mkdir -p docs/images
+        
       - name: Run Script
-        run: python main.py # 리포트 생성 스크립트 실행
-      - name: Deploy to Pages
-        uses: peaceiris/actions-gh-pages@v3 # 결과를 웹에 게시
+        # 여기 파일 이름이 실제 저장소에 있는 이름과 똑같아야 합니다!
+        run: python daily_stock_report.py 
+        
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
