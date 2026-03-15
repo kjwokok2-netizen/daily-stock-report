@@ -1,0 +1,13 @@
+name: Daily Stock Report
+on:
+  schedule:
+    - cron: '0 21 * * *' # 매일 정해진 시간에 실행
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run Script
+        run: python main.py # 리포트 생성 스크립트 실행
+      - name: Deploy to Pages
+        uses: peaceiris/actions-gh-pages@v3 # 결과를 웹에 게시
