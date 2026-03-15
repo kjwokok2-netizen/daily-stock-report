@@ -94,7 +94,7 @@ def get_ranto_ai_insights():
             return f"[{title}] 글이 업데이트 되었습니다. (GEMINI API KEY를 깃허브 시크릿에 등록하시면 AI 요약이 제공됩니다.)"
 
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         prompt = f"다음은 주식/거시경제 전문 블로거 ranto28의 최신 글입니다. 이 글을 학습하여, 오늘 주식 투자를 하는 사람에게 도움이 될 핵심 시황 인사이트를 3개의 글머리 기호로 객관적이고 명확하게 요약해 주세요.\n\n[글 본문]\n{blog_text[:5000]}"
         response = model.generate_content(prompt)
         return response.text
