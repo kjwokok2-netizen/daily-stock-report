@@ -24,12 +24,13 @@ jobs:
           pip install -r requirements.txt
           
       - name: Create necessary directories
-        run: mkdir -p docs/images
+        run: mkdir -p docs/images templates
         
       - name: Run Script
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python daily_stock_report.py 
         
       - name: Deploy to GitHub Pages
