@@ -1,0 +1,9 @@
+finance-datareader
+pandas
+numpy
+requests
+beautifulsoup4
+matplotlib
+seaborn
+jinja2
+pyyaml
