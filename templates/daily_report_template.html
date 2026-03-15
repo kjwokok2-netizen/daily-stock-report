@@ -10,7 +10,6 @@
         h1 { color: #1a73e8; text-align: center; font-size: 2.5em; }
         h2 { border-left: 6px solid #1a73e8; padding-left: 15px; color: #202124; margin-bottom: 20px;}
         .ai-box { background: #fdf5e6; border: 2px solid #f39c12; padding: 20px; border-radius: 10px; line-height: 1.8; font-size: 1.1em; color: #333;}
-        .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 20px; }
         .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
         .card { border: 1px solid #e8eaed; padding: 20px; border-radius: 10px; background: #fafafa; }
         img { width: 100%; border-radius: 8px; margin-top: 15px; }
@@ -37,7 +36,7 @@
             <div class="grid-3">
                 {% for item in data.index_analysis %}
                 <div class="card">
-                    <h3>{{ item.name }} ({{ item.current_price|round(1) }})</h3>
+                    <h3>{{ item.name }} ({{ item.current_price_str }})</h3>
                     <p>위치: <strong>{{ item.position }}</strong></p>
                     <img src="data:image/png;base64,{{ data.plots['chart_'+item.name] }}">
                 </div>
@@ -46,20 +45,27 @@
         </div>
 
         <div class="section">
-            <h2>🔄 섹터 로테이션 및 자금 흐름 (1개월)</h2>
+            <h2>🔄 섹터 로테이션 및 자금 흐름 (최근 1개월 상승률)</h2>
             <img src="data:image/png;base64,{{ data.plots.sector_map }}" style="max-width: 800px; display: block; margin: 0 auto;">
         </div>
 
         <div class="section">
-            <div class="grid-2">
+            <h2>📰 글로벌 증시 및 트렌드 종합</h2>
+            <div class="grid-3">
                 <div class="card">
-                    <h2>📰 핵심 네이버 뉴스</h2>
+                    <h3>🌍 구글 글로벌 증시 뉴스</h3>
+                    {% for n in data.google_news %}
+                    <div class="news-item"><a href="{{ n.link }}" target="_blank">{{ n.title }}</a></div>
+                    {% endfor %}
+                </div>
+                <div class="card">
+                    <h3>🇰🇷 네이버 핵심 뉴스</h3>
                     {% for n in data.naver_news %}
                     <div class="news-item"><a href="{{ n.link }}" target="_blank">{{ n.title }}</a></div>
                     {% endfor %}
                 </div>
                 <div class="card">
-                    <h2>📝 네이버 블로그 트렌드</h2>
+                    <h3>📝 네이버 블로그 시황</h3>
                     {% for b in data.naver_blogs %}
                     <div class="news-item">
                         <a href="{{ b.link }}" target="_blank">{{ b.title }}</a><br>
