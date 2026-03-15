@@ -13,6 +13,11 @@ import time
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+import matplotlib.font_manager as fm
+
+# 한글 폰트 설정 (GitHub Actions 우분투 환경)
+plt.rc('font', family='NanumGothic')
+plt.rcParams['axes.unicode_minus'] = False
 
 # ==========================================
 # 1. Configuration & API Setup
@@ -28,14 +33,11 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
 
 INDICES = {'KOSPI': 'KS11', 'KOSDAQ': 'KQ11', 'NASDAQ': 'IXIC'}
-MACRO_TICKERS = {'US10Y': 'DGS10', 'US02Y': 'DGS2'}
 SECTOR_ETFs = {
     '반도체': '091160', '2차전지': '305700', '에너지': '117700',
     '철강/소재': '117460', '산업재': '117600', '헬스케어': '117620',
     '금융': '117460', 'IT소프트': '117690'
 }
-
-plt.style.use('ggplot')
 
 def fig_to_base64(fig):
     img = BytesIO()
@@ -44,17 +46,14 @@ def fig_to_base64(fig):
     return base64.b64encode(img.getvalue()).decode()
 
 # ==========================================
-# 2. Data Acquisition & AI Analysis
+# 2. Data Acquisition
 # ==========================================
 def get_stock_data(ticker, days=252):
     end = datetime.now()
     start = end - timedelta(days=days)
     for _ in range(3):
         try:
-            if ticker in ['DGS10', 'DGS2']:
-                df = fdr.DataReader(ticker, start, end, data_source='fred')
-            else:
-                df = fdr.DataReader(ticker, start, end)
+            df = fdr.DataReader(ticker, start, end)
             if not df.empty: return df
         except: time.sleep(1)
     return pd.DataFrame()
@@ -63,6 +62,28 @@ def get_market_sentiment():
     try: vix = fdr.DataReader('^VIX').iloc[-1, 0]
     except: vix = 20
     return {'VIX': vix, 'Label': '공포' if vix > 25 else ('탐욕' if vix < 15 else '중립')}
+
+def get_google_news(query="미국 증시 OR 나스닥 OR 글로벌 경제", limit=5):
+    url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+    try:
+        res = requests.get(url, timeout=10)
+        soup = BeautifulSoup(res.content, 'xml')
+        items = soup.find_all('item', limit=limit)
+        return [{'title': i.title.text, 'link': i.link.text} for i in items]
+    except Exception as e:
+        return [{'title': f'구글 뉴스 로드 실패', 'link': '#'}]
+
+def get_naver_search(query, category='news', display=4):
+    if not NAVER_CLIENT_ID: return [{'title': '네이버 API 키가 깃허브 시크릿에 없습니다.', 'link': '#', 'description': ''}]
+    url = f"https://openapi.naver.com/v1/search/{category}.json"
+    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
+    params = {"query": query, "display": display, "sort": "sim"}
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=10)
+        items = res.json().get('items', [])
+        if not items: return [{'title': '검색 결과가 없습니다.', 'link': '#', 'description': ''}]
+        return [{'title': i['title'].replace('<b>','').replace('</b>',''), 'link': i['link'], 'description': i.get('description', '').replace('<b>','').replace('</b>','')[:80]+'...'} for i in items]
+    except: return [{'title': '네이버 API 호출 에러', 'link': '#', 'description': ''}]
 
 def scrape_naver_blog_text(url):
     try:
@@ -101,25 +122,15 @@ def get_ranto_ai_insights():
     except Exception as e:
         return f"AI 분석 중 오류 발생: {e}"
 
-def get_naver_search(query, category='news', display=4):
-    if not NAVER_CLIENT_ID: return []
-    url = f"https://openapi.naver.com/v1/search/{category}.json"
-    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
-    params = {"query": query, "display": display, "sort": "sim"}
-    try:
-        res = requests.get(url, headers=headers, params=params, timeout=10)
-        items = res.json().get('items', [])
-        return [{'title': i['title'].replace('<b>','').replace('</b>',''), 'link': i['link'], 'description': i.get('description', '').replace('<b>','').replace('</b>','')[:80]+'...'} for i in items]
-    except: return []
-
 def analyze_index_elliott(df, name):
-    if df.empty: return {'name': name, 'current_price': 0, 'change': 0, 'position': '데이터 없음'}
+    if df.empty: return {'name': name, 'current_price_str': '0', 'position': '데이터 없음'}
     curr = df['Close'].iloc[-1]
-    prev = df['Close'].iloc[-2]
     high_60 = df['High'].rolling(window=60).max().iloc[-1]
     low_60 = df['Low'].rolling(window=60).min().iloc[-1]
     ratio = (curr - low_60) / (high_60 - low_60 + 1e-6)
-    analysis = {'name': name, 'current_price': curr, 'change': (curr/prev-1)*100, 'support': low_60, 'resistance': high_60}
+    
+    # 콤마 추가
+    analysis = {'name': name, 'current_price_str': f"{curr:,.1f}", 'support': low_60, 'resistance': high_60}
     if ratio < 0.382: analysis['position'] = "조정/하락 파동 구간"
     elif ratio > 0.786: analysis['position'] = "강한 상승 파동 진행 중"
     else: analysis['position'] = "횡보 및 에너지 응축 구간"
@@ -162,17 +173,17 @@ def main():
     if not sector_df.empty:
         fig, ax = plt.subplots(figsize=(10, 5))
         sns.barplot(data=sector_df.sort_values('Perf_1mo', ascending=False), x='Perf_1mo', y='Sector', palette='RdYlGn')
-        ax.set_title("1-Month Sector Rotation Map")
+        ax.set_title("섹터별 자금 흐름 (최근 1개월 수익률 %)")
         report_data['plots']['sector_map'] = fig_to_base64(fig)
         plt.close(fig)
 
-    # AI 분석 및 네이버 검색
+    # 뉴스 및 AI
     report_data['ranto_ai_insight'] = get_ranto_ai_insights()
-    keywords = "코스피 전망 반도체 주식"
-    report_data['naver_news'] = get_naver_search(keywords, 'news', 4)
-    report_data['naver_blogs'] = get_naver_search(keywords, 'blog', 4)
+    report_data['google_news'] = get_google_news()
+    report_data['naver_news'] = get_naver_search("코스피 전망 OR 반도체 주식", 'news', 4)
+    report_data['naver_blogs'] = get_naver_search("미국 주식 시황", 'blog', 4)
 
-    # HTML 생성
+    # HTML 렌더링
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     template = env.get_template('daily_report_template.html')
     with open(os.path.join(OUTPUT_DIR, "index.html"), "w", encoding='utf-8') as f:
