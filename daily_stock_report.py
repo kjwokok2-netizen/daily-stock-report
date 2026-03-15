@@ -48,7 +48,7 @@ def fig_to_base64(fig):
 # ==========================================
 # 2. Data Acquisition
 # ==========================================
-def get_stock_data(ticker, days=252):
+def get_stock_data(ticker, days=365): # 주봉 분석을 위해 1년치 확보
     end = datetime.now()
     start = end - timedelta(days=days)
     for _ in range(3):
@@ -74,7 +74,7 @@ def get_google_news(query="미국 증시 OR 나스닥 OR 글로벌 경제", limi
         return [{'title': f'구글 뉴스 로드 실패', 'link': '#'}]
 
 def get_naver_search(query, category='news', display=4):
-    if not NAVER_CLIENT_ID: return [{'title': '네이버 API 키가 깃허브 시크릿에 없습니다.', 'link': '#', 'description': ''}]
+    if not NAVER_CLIENT_ID: return [{'title': '네이버 API 키가 없습니다.', 'link': '#', 'description': ''}]
     url = f"https://openapi.naver.com/v1/search/{category}.json"
     headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
     params = {"query": query, "display": display, "sort": "sim"}
@@ -112,7 +112,7 @@ def get_ranto_ai_insights():
         blog_text = scrape_naver_blog_text(link)
         
         if not blog_text or not GEMINI_API_KEY:
-            return f"[{title}] 글이 업데이트 되었습니다. (GEMINI API KEY를 깃허브 시크릿에 등록하시면 AI 요약이 제공됩니다.)"
+            return f"[{title}] 글이 업데이트 되었습니다."
 
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-pro')
@@ -122,18 +122,47 @@ def get_ranto_ai_insights():
     except Exception as e:
         return f"AI 분석 중 오류 발생: {e}"
 
-def analyze_index_elliott(df, name):
-    if df.empty: return {'name': name, 'current_price_str': '0', 'position': '데이터 없음'}
-    curr = df['Close'].iloc[-1]
-    high_60 = df['High'].rolling(window=60).max().iloc[-1]
-    low_60 = df['Low'].rolling(window=60).min().iloc[-1]
-    ratio = (curr - low_60) / (high_60 - low_60 + 1e-6)
+# ==========================================
+# 파동 분석 (주봉 변환 및 타겟 산출 로직)
+# ==========================================
+def analyze_index_elliott_weekly(df, name):
+    if df.empty or len(df) < 50: 
+        return {'name': name, 'current_price_str': '0', 'position': '데이터 부족', 'target': '분석 불가', 'weekly_df': pd.DataFrame()}
     
-    # 콤마 추가
-    analysis = {'name': name, 'current_price_str': f"{curr:,.1f}", 'support': low_60, 'resistance': high_60}
-    if ratio < 0.382: analysis['position'] = "조정/하락 파동 구간"
-    elif ratio > 0.786: analysis['position'] = "강한 상승 파동 진행 중"
-    else: analysis['position'] = "횡보 및 에너지 응축 구간"
+    # 일봉을 주봉으로 변환 (금요일 종가 기준)
+    df.index = pd.to_datetime(df.index)
+    weekly_df = df.resample('W').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
+    
+    curr = weekly_df['Close'].iloc[-1]
+    # 최근 20주(약 5개월) 간의 고점, 저점 파악
+    high_20 = weekly_df['High'].rolling(window=20).max().iloc[-1]
+    low_20 = weekly_df['Low'].rolling(window=20).min().iloc[-1]
+    
+    diff = high_20 - low_20
+    ratio = (curr - low_20) / (diff + 1e-6)
+    
+    # 피보나치 확장/되돌림을 이용한 타겟 산출
+    if ratio > 0.786 or curr >= high_20:
+        position = "상승 파동 (3파 또는 5파) 진행 중"
+        target_price = low_20 + (diff * 1.618) # 1.618 피보나치 확장
+        target_text = f"상승 추세 지속 시 파동 끝 목표가 약 {target_price:,.0f} 부근 예상"
+    elif ratio < 0.382:
+        position = "조정 파동 (A파 또는 C파) 진행 중"
+        target_price = high_20 - (diff * 0.618) # 0.618 피보나치 되돌림 하락
+        target_text = f"조정 하락 시 파동 끝 지지선 약 {target_price:,.0f} 부근 예상"
+    else:
+        position = "에너지 수렴 및 횡보 (B파 또는 4파 진행 확률)"
+        target_text = f"방향성 결정 대기 (상단 저항: {high_20:,.0f} / 하단 지지: {low_20:,.0f})"
+        
+    analysis = {
+        'name': name, 
+        'current_price_str': f"{curr:,.1f}", 
+        'position': f"{position} (주봉 기준)",
+        'target': target_text,
+        'support': low_20, 
+        'resistance': high_20,
+        'weekly_df': weekly_df
+    }
     return analysis
 
 def analyze_sector_rotation(sector_dfs):
@@ -152,18 +181,21 @@ def main():
     report_data = {'date': datetime.now().strftime('%Y-%m-%d %H:%M'), 'plots': {}}
     report_data['market_sentiment'] = get_market_sentiment()
     
-    # 지수 파동 분석
+    # 지수 파동 분석 (주봉 차트)
     report_data['index_analysis'] = []
     for name, ticker in INDICES.items():
-        df = get_stock_data(ticker)
-        analysis = analyze_index_elliott(df, name)
+        df = get_stock_data(ticker, 365) # 1년치 데이터 가져오기
+        analysis = analyze_index_elliott_weekly(df, name)
         report_data['index_analysis'].append(analysis)
-        if not df.empty:
+        
+        w_df = analysis.get('weekly_df')
+        if not w_df.empty:
             fig, ax = plt.subplots(figsize=(10, 4))
-            df['Close'].iloc[-100:].plot(ax=ax, color='black')
-            ax.set_title(f"{name} Trend")
-            ax.axhline(analysis['support'], color='red', ls='--')
-            ax.axhline(analysis['resistance'], color='green', ls='--')
+            # 주봉 차트 그리기 (최근 50주)
+            w_df['Close'].iloc[-50:].plot(ax=ax, color='black')
+            ax.set_title(f"{name} Weekly Trend")
+            ax.axhline(analysis['support'], color='red', ls='--', alpha=0.5)
+            ax.axhline(analysis['resistance'], color='green', ls='--', alpha=0.5)
             report_data['plots'][f'chart_{name}'] = fig_to_base64(fig)
             plt.close(fig)
 
